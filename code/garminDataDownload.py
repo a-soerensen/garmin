@@ -12,10 +12,11 @@ Created on Sat Sep 30 01:30:54 2023
 #https://pypi.org/project/garminconnect/0.1.53/
 
 """
-PACKAGES1
+PACKAGES
 """
 
 import os
+from dotenv import load_dotenv
 import datetime
 from datetime import date
 import json
@@ -30,10 +31,16 @@ SETUP PATHS AND OUTPUT
 outpath = 'C:/Users/assn/GitHub/garmin/data/'
 
 """
+LOAD ENVIRONMENT VARIABLES (USER CREDENTIALS)
+"""
+load_dotenv("secret/.env")
+
+email = os.getenv("email")
+password = os.getenv("password")
+
+"""
 API SETUP
 """
-email="email"
-password="password"
 api = Garmin(email, password)
 api.login()
 
