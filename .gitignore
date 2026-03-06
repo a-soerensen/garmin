@@ -1,7 +1,8 @@
-
+archive
 code/gps_heatmap.html
 data/activity_data
 data/logged_data
 data/statistics_data
+data - example
 secret/.env
 output

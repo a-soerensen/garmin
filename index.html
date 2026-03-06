@@ -1,0 +1,249 @@
+<!-- index.html (v4) -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Garmin Running Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- D3 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <!-- Leaflet + Heat -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+</head>
+
+<body>
+  <!-- Top app bar -->
+  <header class="appbar">
+    <div class="appbar-left">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        <div class="brand-text">
+          <div class="brand-title">GARMIN</div>
+          <div class="brand-subtitle">Running Analytics</div>
+        </div>
+      </div>
+      <div class="status" id="statusText">Loading data from /data…</div>
+    </div>
+
+    <div class="appbar-right">
+      <button class="btn" id="reloadBtn" type="button" title="Reload from /data">Reload</button>
+
+      <label class="btn btn-secondary" for="folderPicker" title="Load a new data folder (same structure)">
+        Load Folder…
+      </label>
+      <input id="folderPicker" class="hidden-input" type="file" webkitdirectory directory multiple />
+    </div>
+  </header>
+
+  <!-- Horizontal scroll container -->
+  <main class="viewport">
+    <div class="pages" id="pages">
+      <!-- =======================
+           PAGE 1: TOTALS
+      ======================== -->
+      <section class="page" id="pageTotals" aria-label="Totals">
+        <div class="page-inner">
+          <!-- Header row -->
+          <div class="page-header">
+            <h1 class="page-title">TOTAL</h1>
+            <div class="page-header-right">
+              <div class="hint">Scroll → for Yearly</div>
+            </div>
+          </div>
+
+          <!-- Two-column layout -->
+          <div class="grid-two">
+            <!-- LEFT COLUMN -->
+            <div class="col-left">
+              <!-- Total cards -->
+              <div class="cards-row">
+                <div class="card stat-card">
+                  <div class="card-label">Total km</div>
+                  <div class="card-value" id="totalKm">—</div>
+                </div>
+                <div class="card stat-card">
+                  <div class="card-label">Total hours</div>
+                  <div class="card-value" id="totalHours">—</div>
+                </div>
+                <div class="card stat-card">
+                  <div class="card-label">Total runs</div>
+                  <div class="card-value" id="totalRuns">—</div>
+                </div>
+              </div>
+
+              <!-- PR cards -->
+              <div class="cards-row cards-row-4">
+                <div class="card pr-card">
+                  <div class="card-label">PR Marathon</div>
+                  <div class="card-value small" id="prMarathon">—</div>
+                </div>
+                <div class="card pr-card">
+                  <div class="card-label">PR Half</div>
+                  <div class="card-value small" id="prHalf">—</div>
+                </div>
+                <div class="card pr-card">
+                  <div class="card-label">PR 10K</div>
+                  <div class="card-value small" id="pr10k">—</div>
+                </div>
+                <div class="card pr-card">
+                  <div class="card-label">PR 5K</div>
+                  <div class="card-value small" id="pr5k">—</div>
+                </div>
+              </div>
+
+              <!-- Earth progress -->
+              <div class="card earth-card">
+                <div class="card-header">
+                  <div class="card-title">Around the Earth</div>
+                  <div class="card-meta">
+                    Earth circumference: <span id="earthCircumferenceLabel">40,075 km</span>
+                  </div>
+                </div>
+
+                <div class="earth-wrap">
+                  <svg id="earthSvg" viewBox="0 0 260 260" class="earth-svg" role="img" aria-label="Around the Earth progress"></svg>
+                  <div class="earth-caption">
+                    <div class="earth-big" id="earthPctText">—%</div>
+                    <div class="earth-sub" id="earthSubText">around the earth</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT COLUMN -->
+            <div class="col-right">
+              <!-- Timeline -->
+              <div class="card chart-card">
+                <div class="card-header">
+                  <div class="card-title">Distance over time</div>
+                  <div class="card-meta">Daily distance (area/line) + yearly average km/day (bars)</div>
+                </div>
+                <div class="chart" id="totalsTimeline"></div>
+              </div>
+
+              <!-- GPS heatmap -->
+              <div class="card map-card">
+                <div class="card-header">
+                  <div class="card-title">GPS Heatmap</div>
+                  <div class="card-meta">All GPS points (interactive)</div>
+                </div>
+                <div class="map" id="gpsMap"></div>
+                <div class="map-note" id="gpsNote">If no GPS points are found, the map will remain empty.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =======================
+           PAGE 2: YEARLY
+      ======================== -->
+      <section class="page" id="pageYearly" aria-label="Yearly">
+        <div class="page-inner">
+          <!-- Header row -->
+          <div class="page-header year-header">
+            <h1 class="page-title">YEARLY</h1>
+
+            <!-- Year selector (right-aligned with visuals) -->
+            <div class="year-controls">
+              <button class="icon-btn" id="prevYear" type="button" aria-label="Previous year">‹</button>
+
+              <div class="year-picker">
+                <select id="yearSelect" aria-label="Select year"></select>
+                <div class="year-big" id="yearLabel">—</div>
+              </div>
+
+              <button class="icon-btn" id="nextYear" type="button" aria-label="Next year">›</button>
+            </div>
+          </div>
+
+          <div class="grid-two yearly-grid">
+            <!-- LEFT (charts) -->
+            <div class="yearly-left">
+              <!-- Year totals cards -->
+              <div class="cards-row">
+                <div class="card stat-card">
+                  <div class="card-label">Year km</div>
+                  <div class="card-value" id="yearKm">—</div>
+                </div>
+                <div class="card stat-card">
+                  <div class="card-label">Year hours</div>
+                  <div class="card-value" id="yearHours">—</div>
+                </div>
+                <div class="card stat-card">
+                  <div class="card-label">Year runs</div>
+                  <div class="card-value" id="yearRuns">—</div>
+                </div>
+              </div>
+
+              <!-- 2x2 charts grid -->
+              <div class="yearly-charts-grid">
+                <div class="card chart-card yearly-chart-card">
+                  <div class="card-header">
+                    <div class="card-title">Distance</div>
+                    <div class="card-meta">Daily bars + weekly total line</div>
+                  </div>
+                  <div class="chart yearly-chart" id="yearDistance"></div>
+                </div>
+
+                <div class="card chart-card yearly-chart-card">
+                  <div class="card-header">
+                    <div class="card-title">Pace</div>
+                    <div class="card-meta">Avg pace per activity + trend</div>
+                  </div>
+                  <div class="chart yearly-chart" id="yearPace"></div>
+                </div>
+
+                <div class="card chart-card yearly-chart-card">
+                  <div class="card-header">
+                    <div class="card-title">Heart rate</div>
+                    <div class="card-meta">Avg HR per activity + zones</div>
+                  </div>
+                  <div class="chart yearly-chart" id="yearHr"></div>
+                  <div class="legend" id="hrLegend" aria-label="Heart rate zones legend"></div>
+                </div>
+
+                <div class="card chart-card yearly-chart-card">
+                  <div class="card-header">
+                    <div class="card-title">Cadence</div>
+                    <div class="card-meta">Avg cadence per activity + zones</div>
+                  </div>
+                  <div class="chart yearly-chart" id="yearCadence"></div>
+                  <div class="legend" id="cadenceLegend" aria-label="Cadence zones legend"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT (calendar) -->
+            <div class="yearly-right">
+              <div class="card calendar-card">
+                <div class="card-header">
+                  <div class="card-title">Calendar</div>
+                  <div class="card-meta">km per day (heatmap)</div>
+                </div>
+
+                <!-- scaled down by CSS -->
+                <div class="calendar-container" id="calendarContainer">
+                  <div class="calendar-grid" id="calendarGrid"></div>
+                </div>
+              </div>
+
+              <div class="calendar-footnote">
+                Tip: hover days to see exact distance.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script defer src="app.js"></script>
+</body>
+</html>
