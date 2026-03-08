@@ -155,12 +155,12 @@ body {
 
 .pages {
   display: flex;
-  width: 220vw;
+  width: 200vw;
   height: 100%;
 }
 
 .page {
-  width: 110vw;
+  width: 100vw;
   height: 100%;
   padding: 20px 18px 22px 18px;
   scroll-snap-align: start;
@@ -202,7 +202,7 @@ body {
 /* General layout */
 .grid-two {
   display: grid;
-  grid-template-columns: 0.96fr 1.24fr;
+  grid-template-columns: 0.8fr 1.2fr;
   gap: 18px;
   height: calc(100% - 82px);
   min-height: 0;
@@ -368,7 +368,7 @@ body {
 
 /* Yearly page sizing */
 .yearly-grid {
-  grid-template-columns: 1.16fr 0.84fr;
+  grid-template-columns: 1.4fr 0.6fr;
   gap: 12px;
 }
 
@@ -471,16 +471,16 @@ body {
 .calendar-container {
   flex: 1 1 auto;
   min-height: 0;
-  transform: scale(0.78);
+  transform: scale(1.05);
   transform-origin: top left;
-  width: 128%;
+  width: 100%;
   height: 128%;
 }
 
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(190px, 1fr));
-  gap: 18px 22px;
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  gap: 18px 10px;
   align-content: start;
 }
 
