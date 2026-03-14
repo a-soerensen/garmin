@@ -19,6 +19,7 @@
 
 const EARTH_CIRCUMFERENCE_KM = 40075;
 const ACTIVITY_INDEX_PATH = "data/activity_data/activity_index.json";
+const GPX_INDEX_PATH = "data/activity_data/gpx_index.json";
 
 const state = {
   activities: [],
@@ -60,12 +61,14 @@ function initUI() {
     if (!files.length) return;
 
     setStatus("Parsing uploaded folder…");
+
     try {
       const data = await loadFromFolderFiles(files);
+      console.log("Folder load result:", data);
       applyLoadedData(data, `Loaded ${data.activities.length} running activities from selected folder`);
     } catch (err) {
-      console.error(err);
-      setStatus("Failed to parse uploaded folder.");
+      console.error("Folder load failed:", err);
+      setStatus(`Failed to parse uploaded folder: ${err.message || err}`);
     }
   });
 
@@ -99,39 +102,36 @@ function initUI() {
 --------------------------- */
 
 async function loadFromRepoData() {
-  const index = await fetch(ACTIVITY_INDEX_PATH).then(assertOk).then(r => r.json());
+  const activityIndex = await fetch(ACTIVITY_INDEX_PATH).then(assertOk).then(r => r.json());
 
-  const activityPromises = index.map(async (relativePath) => {
+  const activityPromises = activityIndex.map(async (relativePath) => {
     const json = await fetch(`data/activity_data/${relativePath}`).then(assertOk).then(r => r.json());
     return parseActivityCore(json);
   });
 
-  const parsed = (await Promise.all(activityPromises)).filter(Boolean);
-  const gpsPoints = [];
+  const parsedActivities = (await Promise.all(activityPromises)).filter(Boolean);
 
-  return {
-    activities: parsed,
-    gpsPoints
-  };
-}
+  let gpsPoints = [];
 
-async function loadFromFolderFiles(files) {
-  const activityFiles = files.filter(f => /activity_core/i.test(f.webkitRelativePath || f.name) && f.name.endsWith(".json"));
-  const parsed = [];
+  // GPX auto-load requires a second index file because the browser cannot list directories.
+  try {
+    const gpxIndex = await fetch(GPX_INDEX_PATH).then(assertOk).then(r => r.json());
 
-  for (const file of activityFiles) {
-    try {
-      const json = JSON.parse(await file.text());
-      const row = parseActivityCore(json);
-      if (row) parsed.push(row);
-    } catch (err) {
-      console.warn("Could not parse", file.name, err);
-    }
+    const gpxPointSets = await Promise.all(
+      gpxIndex.map(async (relativePath) => {
+        const text = await fetch(`data/activity_data/${relativePath}`).then(assertOk).then(r => r.text());
+        return parseGpxText(text);
+      })
+    );
+
+    gpsPoints = gpxPointSets.flat();
+  } catch (err) {
+    console.warn("GPX auto-load skipped:", err);
   }
 
   return {
-    activities: parsed,
-    gpsPoints: []
+    activities: parsedActivities,
+    gpsPoints: downsampleGpsPoints(gpsPoints, 60000)
   };
 }
 
@@ -180,6 +180,83 @@ function parseActivityCore(json) {
     cadenceSpm,
     steps,
     raw: json
+  };
+}
+
+function parseGpxText(gpxText) {
+  const xml = new DOMParser().parseFromString(gpxText, "application/xml");
+
+  const parserError = xml.querySelector("parsererror");
+  if (parserError) {
+    console.warn("Invalid GPX XML");
+    return [];
+  }
+
+  const trkpts = Array.from(xml.querySelectorAll("trkpt"));
+  const pts = [];
+
+  for (const pt of trkpts) {
+    const lat = Number(pt.getAttribute("lat"));
+    const lon = Number(pt.getAttribute("lon"));
+
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      pts.push([lat, lon, 0.65]);
+    }
+  }
+
+  return pts;
+}
+
+function downsampleGpsPoints(points, maxPoints = 60000) {
+  if (!Array.isArray(points) || points.length <= maxPoints) {
+    return points || [];
+  }
+
+  const stride = Math.ceil(points.length / maxPoints);
+  const sampled = [];
+
+  for (let i = 0; i < points.length; i += stride) {
+    sampled.push(points[i]);
+  }
+
+  return sampled;
+}
+
+async function loadFromFolderFiles(files) {
+  const activityFiles = files.filter(
+    f => /activity_core/i.test(f.webkitRelativePath || f.name) && f.name.toLowerCase().endsWith(".json")
+  );
+
+  const gpxFiles = files.filter(
+    f => /(^|\/|\\)gpx(\/|\\)/i.test(f.webkitRelativePath || "") || f.name.toLowerCase().endsWith(".gpx")
+  );
+
+  const parsedActivities = [];
+  const gpsPointSets = [];
+
+  for (const file of activityFiles) {
+    try {
+      const json = JSON.parse(await file.text());
+      const row = parseActivityCore(json);
+      if (row) parsedActivities.push(row);
+    } catch (err) {
+      console.warn("Could not parse activity JSON:", file.name, err);
+    }
+  }
+
+  for (const file of gpxFiles) {
+    try {
+      const text = await file.text();
+      const points = parseGpxText(text);
+      if (points.length) gpsPointSets.push(points);
+    } catch (err) {
+      console.warn("Could not parse GPX:", file.name, err);
+    }
+  }
+
+  return {
+    activities: parsedActivities,
+    gpsPoints: downsampleGpsPoints(gpsPointSets.flat(), 60000)
   };
 }
 
@@ -317,61 +394,6 @@ function renderEarthProgress(totalKm) {
     .attr("stroke", "rgba(255,255,255,0.08)")
     .attr("stroke-width", 1);
 
-  const angle = -Math.PI / 2 + Math.PI * 2 * clamped;
-  const runnerX = Math.cos(angle) * (r + 10);
-  const runnerY = Math.sin(angle) * (r + 10);
-
-  const runner = g.append("g")
-    .attr("transform", `translate(${runnerX},${runnerY}) rotate(${angle * 180 / Math.PI + 90})`);
-
-  runner.append("circle")
-    .attr("cx", 0)
-    .attr("cy", -12)
-    .attr("r", 4.5)
-    .attr("fill", "#eef4ff");
-
-  runner.append("line")
-    .attr("x1", 0).attr("y1", -7)
-    .attr("x2", 0).attr("y2", 5)
-    .attr("stroke", "#eef4ff")
-    .attr("stroke-width", 3)
-    .attr("stroke-linecap", "round");
-
-  runner.append("line")
-    .attr("x1", 0).attr("y1", -2)
-    .attr("x2", -9).attr("y2", 3)
-    .attr("stroke", "#eef4ff")
-    .attr("stroke-width", 3)
-    .attr("stroke-linecap", "round");
-
-  runner.append("line")
-    .attr("x1", 0).attr("y1", -1)
-    .attr("x2", 8).attr("y2", 5)
-    .attr("stroke", "#eef4ff")
-    .attr("stroke-width", 3)
-    .attr("stroke-linecap", "round");
-
-  runner.append("line")
-    .attr("x1", 0).attr("y1", 5)
-    .attr("x2", -8).attr("y2", 15)
-    .attr("stroke", "#eef4ff")
-    .attr("stroke-width", 3)
-    .attr("stroke-linecap", "round");
-
-  runner.append("line")
-    .attr("x1", 0).attr("y1", 5)
-    .attr("x2", 10).attr("y2", 15)
-    .attr("stroke", "#eef4ff")
-    .attr("stroke-width", 3)
-    .attr("stroke-linecap", "round");
-
-  runner.append("animateTransform")
-    .attr("attributeName", "transform")
-    .attr("type", "translate")
-    .attr("values", `${runnerX},${runnerY}; ${runnerX},${runnerY - 3}; ${runnerX},${runnerY}`)
-    .attr("dur", "1.2s")
-    .attr("repeatCount", "indefinite");
-
   setText("earthPctText", `${formatNumber(pct * 100, 1)}%`);
   setText("earthSubText", "around the earth");
 }
@@ -380,33 +402,18 @@ function renderTotalsTimeline(acts) {
   const container = document.getElementById("totalsTimeline");
   clearNode(container);
 
-  const daily = aggregateAllDays(acts);
-  if (!daily.length) return emptyChart(container, "No data");
-
-  const years = d3.group(acts, d => d.year);
-  const yearlyAvgBars = Array.from(years, ([year, items]) => {
-    const start = new Date(year, 0, 1);
-    const end = new Date(year, 11, 31);
-    const days = dayDiffInclusive(start, end);
-    return {
-      year,
-      date: new Date(year, 6, 1),
-      avgKmPerDay: d3.sum(items, d => d.distanceKm) / days
-    };
-  });
+  const weekly = weeklyTotalsFromActivities(acts);
+  if (!weekly.length) return emptyChart(container, "No data");
 
   const svg = createSvg(container);
-  const { width, height, innerW, innerH, g } = chartFrame(svg, { top: 16, right: 20, bottom: 36, left: 46 });
+  const { innerW, innerH, g } = chartFrame(svg, { top: 16, right: 20, bottom: 36, left: 52 });
 
   const x = d3.scaleTime()
-    .domain(d3.extent(daily, d => d.date))
+    .domain(d3.extent(weekly, d => d.date))
     .range([0, innerW]);
 
   const y = d3.scaleLinear()
-    .domain([0, d3.max([
-      d3.max(daily, d => d.distanceKm),
-      d3.max(yearlyAvgBars, d => d.avgKmPerDay)
-    ]) * 1.12 || 1])
+    .domain([0, (d3.max(weekly, d => d.totalKm) || 1) * 1.12])
     .nice()
     .range([innerH, 0]);
 
@@ -414,53 +421,38 @@ function renderTotalsTimeline(acts) {
     .attr("class", "gridline")
     .call(d3.axisLeft(y).tickSize(-innerW).tickFormat(""));
 
-  const barWidth = Math.max(10, innerW / Math.max(1, yearlyAvgBars.length * 3));
-  g.selectAll(".yearbar")
-    .data(yearlyAvgBars)
-    .enter()
-    .append("rect")
-    .attr("x", d => x(d.date) - barWidth / 2)
-    .attr("y", d => y(d.avgKmPerDay))
-    .attr("width", barWidth)
-    .attr("height", d => innerH - y(d.avgKmPerDay))
-    .attr("rx", 8)
-    .attr("fill", "rgba(111, 140, 255, 0.18)")
-    .attr("stroke", "rgba(111, 140, 255, 0.35)");
-
-  const area = d3.area()
-    .x(d => x(d.date))
-    .y0(innerH)
-    .y1(d => y(d.distanceKm))
-    .curve(d3.curveMonotoneX);
-
   const line = d3.line()
+    .defined(d => Number.isFinite(d.totalKm))
     .x(d => x(d.date))
-    .y(d => y(d.distanceKm))
+    .y(d => y(d.totalKm))
     .curve(d3.curveMonotoneX);
 
   g.append("path")
-    .datum(daily)
-    .attr("fill", "rgba(86, 212, 255, 0.15)")
-    .attr("d", area);
-
-  g.append("path")
-    .datum(daily)
+    .datum(weekly)
     .attr("fill", "none")
     .attr("stroke", "#56d4ff")
-    .attr("stroke-width", 2.2)
+    .attr("stroke-width", 2.5)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round")
     .attr("d", line);
 
-  const xAxis = d3.axisBottom(x).ticks(Math.min(10, daily.length / 50)).tickFormat(d3.timeFormat("%Y"));
-  const yAxis = d3.axisLeft(y).ticks(5);
+  g.selectAll(".week-dot")
+    .data(weekly)
+    .enter()
+    .append("circle")
+    .attr("cx", d => x(d.date))
+    .attr("cy", d => y(d.totalKm))
+    .attr("r", 2.8)
+    .attr("fill", "#56d4ff");
 
   g.append("g")
     .attr("class", "axis")
     .attr("transform", `translate(0,${innerH})`)
-    .call(xAxis);
+    .call(d3.axisBottom(x).ticks(Math.min(10, Math.max(4, Math.floor(weekly.length / 12)))).tickFormat(d3.timeFormat("%Y")));
 
   g.append("g")
     .attr("class", "axis")
-    .call(yAxis);
+    .call(d3.axisLeft(y).ticks(5));
 
   const overlay = g.append("rect")
     .attr("width", innerW)
@@ -470,11 +462,10 @@ function renderTotalsTimeline(acts) {
   overlay.on("mousemove", (event) => {
     const [mx] = d3.pointer(event);
     const date = x.invert(mx);
-    const bisect = d3.bisector(d => d.date).center;
-    const idx = bisect(daily, date);
-    const d = daily[idx];
+    const idx = d3.bisector(d => d.date).center(weekly, date);
+    const d = weekly[idx];
     if (!d) return;
-    showTooltip(event, `${fmtDate(d.date)}<br>${formatNumber(d.distanceKm, 2)} km`);
+    showTooltip(event, `Week ending ${fmtDate(d.date)}<br>${formatNumber(d.totalKm, 2)} km`);
   }).on("mouseleave", hideTooltip);
 }
 
@@ -484,13 +475,19 @@ function renderGpsMap(points) {
   if (!state.gpsMap) {
     state.gpsMap = L.map("gpsMap", {
       zoomControl: true,
-      attributionControl: true
-    }).setView([20, 0], 2);
+      attributionControl: true,
+      preferCanvas: true
+    }).setView([55.6761, 12.5683], 8);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18,
-      attribution: "&copy; OpenStreetMap contributors"
-    }).addTo(state.gpsMap);
+    // Dark basemap to match dashboard theme
+    L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {
+        maxZoom: 20,
+        subdomains: "abcd",
+        attribution: "&copy; OpenStreetMap &copy; CARTO"
+      }
+    ).addTo(state.gpsMap);
   }
 
   if (state.gpsLayer) {
@@ -499,20 +496,33 @@ function renderGpsMap(points) {
   }
 
   if (!points || !points.length) {
-    note.textContent = "No GPS points loaded yet. We can wire /data/logged_data next.";
+    note.textContent = "No GPX points loaded yet.";
     setTimeout(() => state.gpsMap.invalidateSize(), 50);
     return;
   }
 
   state.gpsLayer = L.heatLayer(points, {
-    radius: 10,
-    blur: 12,
-    maxZoom: 13
+    radius: 9,
+    blur: 8,
+    maxZoom: 1,
+    minOpacity: 0.35,
+    gradient: {
+      0.15: "#2b6cff",
+      0.4: "#00c2ff",
+      0.65: "#49e38f",
+      0.85: "#f7d154",
+      1.0: "#ff6b6b"
+    }
   }).addTo(state.gpsMap);
 
   const bounds = L.latLngBounds(points.map(p => [p[0], p[1]]));
-  if (bounds.isValid()) state.gpsMap.fitBounds(bounds.pad(0.1));
-  note.textContent = `${formatNumber(points.length, 0)} GPS points`;
+  if (bounds.isValid()) {
+    state.gpsMap.fitBounds(bounds.pad(0.08));
+  } else {
+    state.gpsMap.setView([55.6761, 12.5683], 8);
+  }
+
+  note.textContent = `${formatNumber(points.length, 0)} GPS points loaded`;
   setTimeout(() => state.gpsMap.invalidateSize(), 50);
 }
 
@@ -983,6 +993,23 @@ function weeklyTotalsFromDaily(daily) {
       weekMap.set(key, { date: endOfWeekSunday(monday), totalKm: 0 });
     }
     weekMap.get(key).totalKm += d.distanceKm;
+  });
+
+  return Array.from(weekMap.values()).sort((a, b) => a.date - b.date);
+}
+
+function weeklyTotalsFromActivities(acts) {
+  if (!acts.length) return [];
+
+  const weekMap = new Map();
+
+  acts.forEach(a => {
+    const monday = startOfWeekMonday(a.date);
+    const key = isoDate(monday);
+    if (!weekMap.has(key)) {
+      weekMap.set(key, { date: endOfWeekSunday(monday), totalKm: 0 });
+    }
+    weekMap.get(key).totalKm += a.distanceKm;
   });
 
   return Array.from(weekMap.values()).sort((a, b) => a.date - b.date);

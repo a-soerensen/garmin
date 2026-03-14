@@ -7,6 +7,7 @@ repo_root = Path(__file__).resolve().parent
 # Target directories
 activity_data_root = repo_root / "data" / "activity_data"
 activity_core_dir = activity_data_root / "activity_core"
+gpx_dir = activity_data_root / "gpx"
 
 # Output file
 output_file = activity_data_root / "activity_index.json"
@@ -25,4 +26,20 @@ with open(output_file, "w", encoding="utf-8") as f:
     json.dump(files, f, indent=2)
 
 print(f"Generated activity_index.json with {len(files)} entries.")
+print(f"Location: {output_file}")
+
+output_file = activity_data_root / "gpx_index.json"
+
+if not gpx_dir.exists():
+    raise FileNotFoundError(f"Could not find GPX directory: {gpx_dir}")
+
+files = sorted(
+    str(path.relative_to(activity_data_root)).replace("\\", "/")
+    for path in gpx_dir.rglob("*.gpx")
+)
+
+with open(output_file, "w", encoding="utf-8") as f:
+    json.dump(files, f, indent=2)
+
+print(f"Generated gpx_index.json with {len(files)} entries.")
 print(f"Location: {output_file}")
